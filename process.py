@@ -7,18 +7,32 @@ from PIL import Image
 import io
 
 
+def calculate_rotation(polygon):
+    top_left = polygon[0]
+    top_right = polygon[1]
+    delta_y = top_right['Y'] - top_left['Y']
+    delta_x = top_right['X'] - top_left['X']
+    angle = math.degrees(math.atan2(delta_y, delta_x))
+
+    if -45 <= angle < 45:
+        return 0
+    elif 45 <= angle < 135:
+        return 90
+    elif angle >= 135 or angle < -135:
+        return 180
+    else:
+        return 270
+
+
 def make_pdf_doc_searchable(
     pdf_doc: fitz.Document,
     textract_pages: List[Dict[str, Any]],
     add_word_bbox: bool = False,
     show_selectable_char: bool = False,
-    pdf_image_dpi: int = 100,  # Adjust DPI to improve quality
-    jpeg_quality: int = 85,    # Adjust JPEG quality
+    pdf_image_dpi: int = 100,
+    jpeg_quality: int = 85,
     verbose: bool = False,
 ) -> fitz.Document:
-    """
-    Convert a non-searchable PDF to a searchable one using Textract data.
-    """
     output_pdf = fitz.open()
     page_blocks = {}
 
@@ -32,10 +46,9 @@ def make_pdf_doc_searchable(
         pdf_page = pdf_doc.load_page(page_number)
         pdf_pix_map = pdf_page.get_pixmap(dpi=pdf_image_dpi, colorspace="RGB")
 
-        # Convert pixmap to PIL image to apply compression
         img = Image.frombytes("RGB", (pdf_pix_map.width, pdf_pix_map.height), pdf_pix_map.samples)
         img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='JPEG', quality=jpeg_quality)  # Adjust quality for compression
+        img.save(img_byte_arr, format='JPEG', quality=jpeg_quality)
         img_byte_arr.seek(0)
 
         output_page = output_pdf.new_page(
@@ -48,34 +61,30 @@ def make_pdf_doc_searchable(
                 bbox = BoundingBox.from_textract_bbox(block["Geometry"]["BoundingBox"])
                 bbox.scale(output_page.rect.width, output_page.rect.height)
 
-                # if add_word_bbox:
-                #     pdf_rect = fitz.Rect(bbox.left, bbox.top, bbox.right, bbox.bottom)
-                #     output_page.draw_rect(
-                #         pdf_rect,
-                #         color=(220 / 255, 20 / 255, 60 / 255),
-                #         fill=None,
-                #         width=0.7,
-                #         dashes=None,
-                #         overlay=True,
-                #         morph=None,
-                #     )
+                rotation_angle = calculate_rotation(block["Geometry"]["Polygon"])
 
-                fill_opacity = 1 if show_selectable_char else 0
                 text = block["Text"]
-                text_length = fitz.get_text_length(
-                    text, fontname="helv", fontsize=15
-                )
-                fontsize_optimal = int(
-                    math.floor((bbox.width / text_length) * 15)
-                )
+                text_length = fitz.get_text_length(text, fontname="helv", fontsize=15)
+                fontsize_optimal = int(math.floor((bbox.width / text_length) * 15))
+
+                # Adjust the starting point for text insertion based on rotation and alignment
+                if rotation_angle == 0:
+                    text_point = fitz.Point(bbox.left, bbox.bottom)
+                elif rotation_angle == 90:
+                    text_point = fitz.Point(bbox.right, bbox.top)
+                elif rotation_angle == 180:
+                    text_point = fitz.Point(bbox.right, bbox.top - bbox.height)
+                else:  # 270 degrees
+                    text_point = fitz.Point(bbox.left, bbox.top)
+
                 output_page.insert_text(
-                    point=fitz.Point(bbox.left, bbox.bottom),
+                    point=text_point,
                     text=text,
                     fontname="helv",
                     fontsize=fontsize_optimal,
-                    rotate=0,
-                    color=(220 / 255, 20 / 255, 60 / 255),
-                    fill_opacity=1 if show_selectable_char else 0,
+                    rotate=rotation_angle,
+                    color=(0, 0, 0),
+                    # fill_opacity=0 if show_selectable_char else 0,
                 )
 
     pdf_doc.close()
@@ -101,8 +110,9 @@ selectable_pdf_doc = make_pdf_doc_searchable(
     textract_pages=textract_pages,
     add_word_bbox=False,
     show_selectable_char=False,
-    pdf_image_dpi=100,  # Adjusted DPI for better quality
+    pdf_image_dpi=150,
+    jpeg_quality=100,
     verbose=True,
 )
 
-selectable_pdf_doc.save("output.pdf", garbage=4, deflate=True)  # Use deflate compression
+selectable_pdf_doc.save("output.pdf", garbage=4, deflate=True)
