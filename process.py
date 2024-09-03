@@ -1,11 +1,8 @@
 import json
-import fitz
+import fitz  # PyMuPDF
 from geometry import BoundingBox
 import math
 from typing import Dict, List, Any
-from PIL import Image
-import io
-
 
 def calculate_rotation(polygon):
     top_left = polygon[0]
@@ -23,49 +20,50 @@ def calculate_rotation(polygon):
     else:
         return 270
 
-
 def make_pdf_doc_searchable(
     pdf_doc: fitz.Document,
     textract_pages: List[Dict[str, Any]],
     add_word_bbox: bool = False,
     show_selectable_char: bool = False,
     pdf_image_dpi: int = 100,
-    jpeg_quality: int = 85,
     verbose: bool = False,
 ) -> fitz.Document:
+    # Create a new PDF for the output
     output_pdf = fitz.open()
-    page_blocks = {}
 
-    for page_number, page_blocks_list in enumerate(textract_pages):
-        for block in page_blocks_list.get("Blocks", []):
-            if page_number not in page_blocks:
-                page_blocks[page_number] = []
-            page_blocks[page_number].append(block)
+    # Iterate over each page and add text overlay
+    for page_number, page in enumerate(textract_pages):
+        # Open the original page
+        pdf_page = pdf_doc[page_number]
 
-    for page_number in range(len(pdf_doc)):
-        pdf_page = pdf_doc.load_page(page_number)
-        pdf_pix_map = pdf_page.get_pixmap(dpi=pdf_image_dpi, colorspace="RGB")
+        # Create a new page with the same size
+        output_page = output_pdf.new_page(width=pdf_page.rect.width, height=pdf_page.rect.height)
 
-        img = Image.frombytes("RGB", (pdf_pix_map.width, pdf_pix_map.height), pdf_pix_map.samples)
-        img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='JPEG', quality=jpeg_quality)
-        img_byte_arr.seek(0)
+        # Copy non-text (e.g., images, graphics) content from the original page
+        output_page.show_pdf_page(pdf_page.rect, pdf_doc, page_number, clip=pdf_page.rect)
 
-        output_page = output_pdf.new_page(
-            width=pdf_page.rect.width, height=pdf_page.rect.height
-        )
-        output_page.insert_image(pdf_page.rect, stream=img_byte_arr)
+        # Clear existing text objects to remove previous OCR text
+        output_page.clean_contents(sanitize=True)  # Remove existing overlay text
 
-        for block in page_blocks.get(page_number, []):
+        blocks = page.get("Blocks", [])
+        for blocki, block in enumerate(blocks):
             if block["BlockType"] == "WORD":
+                if verbose and blocki % 1000 == 0:
+                    print(f"Processing block {blocki} on page {page_number + 1}")
+
+                # Get the bbox object and scale it to the page pixel size
                 bbox = BoundingBox.from_textract_bbox(block["Geometry"]["BoundingBox"])
                 bbox.scale(output_page.rect.width, output_page.rect.height)
 
                 rotation_angle = calculate_rotation(block["Geometry"]["Polygon"])
-
+                # Add overlay text
                 text = block["Text"]
-                text_length = fitz.get_text_length(text, fontname="helv", fontsize=15)
-                fontsize_optimal = int(math.floor((bbox.width / text_length) * 15))
+                text_length = fitz.get_text_length(
+                    text, fontname="helv", fontsize=12
+                )
+                fontsize_optimal = int(
+                    math.floor((bbox.width / text_length) * 12)
+                )
 
                 # Adjust the starting point for text insertion based on rotation and alignment
                 if rotation_angle == 0:
@@ -90,29 +88,24 @@ def make_pdf_doc_searchable(
     pdf_doc.close()
     return output_pdf
 
-
+# Main section
 doc = fitz.open("input.pdf")
 data = json.load(open("response.json"))
 
-textract_pages = [page_data for page_data in data]
+print(f"Number of pages: {len(data)}")
 
-print(f"no. of pages {len(textract_pages)}")
-
-num_word_blocks = 0
-for page_data in textract_pages:
-    for blk in page_data.get("Blocks", []):
-        if blk["BlockType"] == "WORD":
-            num_word_blocks += 1
-print(f"number of WORD blocks {num_word_blocks}")
+num_word_blocks = sum(
+    1 for page in data for blk in page.get("Blocks", []) if blk["BlockType"] == "WORD"
+)
+print(f"Number of WORD blocks: {num_word_blocks}")
 
 selectable_pdf_doc = make_pdf_doc_searchable(
     pdf_doc=doc,
-    textract_pages=textract_pages,
-    add_word_bbox=False,
+    textract_pages=data,
+    add_word_bbox=True,
     show_selectable_char=False,
     pdf_image_dpi=100,
-    jpeg_quality=85,
     verbose=True,
 )
 
-selectable_pdf_doc.save("output.pdf", garbage=4, deflate=True)
+selectable_pdf_doc.save("output.pdf")
