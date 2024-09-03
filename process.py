@@ -84,7 +84,7 @@ def make_pdf_doc_searchable(
                     fontsize=fontsize_optimal,
                     rotate=rotation_angle,
                     color=(0, 0, 0),
-                    # fill_opacity=0 if show_selectable_char else 0,
+                    fill_opacity=1 if show_selectable_char else 0,
                 )
 
     pdf_doc.close()
@@ -110,8 +110,8 @@ selectable_pdf_doc = make_pdf_doc_searchable(
     textract_pages=textract_pages,
     add_word_bbox=False,
     show_selectable_char=False,
-    pdf_image_dpi=150,
-    jpeg_quality=100,
+    pdf_image_dpi=100,
+    jpeg_quality=85,
     verbose=True,
 )
 

@@ -2,7 +2,6 @@ import boto3
 import json
 from PyPDF2 import PdfReader, PdfWriter
 from io import BytesIO
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Initialize the Textract client
 textract_client = boto3.client("textract")
@@ -14,36 +13,25 @@ def analyze_document(page_bytes):
     )
     return response
 
-# Function to process a single page and analyze it
-def process_page(page, page_number):
-    writer = PdfWriter()
-    writer.add_page(page)
-
-    # Write the single page to a bytes object
-    page_bytes_io = BytesIO()
-    writer.write(page_bytes_io)
-    page_bytes_io.seek(0)
-
-    # Analyze the single page
-    return analyze_document(page_bytes_io.read())
-
-# Function to process the entire PDF using parallel processing
+# Function to process each page
 def process_pdf(file_path):
     reader = PdfReader(file_path)
     num_pages = len(reader.pages)
-
     responses = []
-    with ThreadPoolExecutor() as executor:
-        # Submit all page processing tasks
-        futures = {executor.submit(process_page, reader.pages[i], i): i for i in range(num_pages)}
 
-        # Collect results as they complete
-        for future in as_completed(futures):
-            try:
-                page_response = future.result()
-                responses.append(page_response)
-            except Exception as e:
-                print(f"Error processing page {futures[future]}: {e}")
+    for page_number in range(num_pages):
+        # Extract a single page
+        writer = PdfWriter()
+        writer.add_page(reader.pages[page_number])
+
+        # Write the single page to a bytes object
+        page_bytes_io = BytesIO()
+        writer.write(page_bytes_io)
+        page_bytes_io.seek(0)
+
+        # Analyze the single page
+        page_response = analyze_document(page_bytes_io.read())
+        responses.append(page_response)
 
     return responses
 
